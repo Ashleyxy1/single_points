@@ -216,7 +216,7 @@ class DTWKNN:
         nearest = distances[:k]
 
         # DTW 距离越大相似度越低，用 1/(d+ε) 做权重
-        n_classes = len(set(self.labels_))
+        n_classes = int(max(self.labels_)) + 1
         scores = np.zeros(n_classes)
         for dist, label in nearest:
             weight = 1.0 / (dist + 1e-6)

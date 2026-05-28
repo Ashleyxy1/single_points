@@ -24,6 +24,8 @@ from point import create_hands_detector, draw_landmarks, count_raised_fingers
 from dynamic_hand_dtw import (
     DTWKNN, MotionSegmenter, extract_raw_keypoints
 )
+from realtime_translate import put_chinese_texts
+from ws_sender import create_sender
 
 MODEL_DIR = "dynamic_data"
 SEQUENCES_FILE = os.path.join(MODEL_DIR, "sequences.pkl")
@@ -60,6 +62,11 @@ def main():
     if dtw_knn is None:
         return
 
+    ws_sender = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("--ws="):
+            ws_sender = create_sender(arg[5:])
+
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("无法打开摄像头")
@@ -80,6 +87,7 @@ def main():
     result_history = deque(maxlen=5)
     last_recognition_time = 0
     current_result = None  # (gesture_name, confidence)
+    last_printed = None
 
     print("\n=== 实时动态手势识别 ===")
     print("做动作即可，系统会自动检测并识别")
@@ -122,11 +130,21 @@ def main():
                 current_result = (gesture_name, confidence, len(detected_seq))
                 result_history.append(current_result)
                 last_recognition_time = time.time()
-                print(f"  [识别] {gesture_name} (置信度: {confidence:.1%}, "
-                      f"帧数: {len(detected_seq)}, DTW耗时: {elapsed:.0f}ms)")
+
+                if gesture_name != last_printed:
+                    print(f"[识别] {gesture_name}  |  置信度: {confidence:.1%}  |  "
+                          f"帧数: {len(detected_seq)}  |  DTW: {elapsed:.0f}ms")
+                    if ws_sender:
+                        ws_sender.send({
+                            "gesture": gesture_name,
+                            "confidence": round(confidence, 4),
+                            "type": "dynamic",
+                            "frames": len(detected_seq),
+                            "dtw_ms": round(elapsed, 1),
+                        })
+                    last_printed = gesture_name
             else:
-                print(f"  [低置信度] {id_to_label.get(pred_id, '?')} "
-                      f"({confidence:.1%}), 已丢弃")
+                last_printed = None
 
         # ---- 画面绘制 ----
 
@@ -165,9 +183,8 @@ def main():
                 cv2.rectangle(overlay, (0, h - 200), (350, h), (30, 30, 30), -1)
                 annotated = cv2.addWeighted(overlay, 0.5, annotated, 0.5, 0)
 
-                cv2.putText(annotated, f"Gesture: {name}",
-                            (15, h - 150), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
-                            (0, 255, 0), 3)
+                annotated = put_chinese_texts(annotated,
+                    [(f"Gesture: {name}", 15, h - 150, 38, (0, 255, 0))])
                 cv2.putText(annotated, f"Confidence: {conf:.1%}",
                             (15, h - 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
                             (0, 255, 0), 2)
@@ -196,6 +213,8 @@ def main():
     cap.release()
     detector.close()
     cv2.destroyAllWindows()
+    if ws_sender:
+        ws_sender.close()
 
 
 if __name__ == "__main__":
